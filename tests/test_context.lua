@@ -285,4 +285,19 @@ T["rejects nonmatching cached contexts"] = function()
   MiniTest.expect.equality(context.cached_remainder(cached, changed_suffix, "42"), nil)
 end
 
+T["strips text repeated from before the cursor"] = function()
+  local prefix = "local M = {}\n\nfunction M.clear_all()\n  "
+  MiniTest.expect.equality(
+    context.strip_repeated_prefix(prefix, "function M.clear_all()\n  M.dismiss()\nend"),
+    "M.dismiss()\nend"
+  )
+  MiniTest.expect.equality(context.strip_repeated_prefix(prefix, "M.dismiss()\nend"), "M.dismiss()\nend")
+  MiniTest.expect.equality(context.strip_repeated_prefix("local function is_visible()\n  return ", "is_visible()\n  return "), "")
+end
+
+T["keeps short repeats such as closing keywords"] = function()
+  MiniTest.expect.equality(context.strip_repeated_prefix("  if ok then\n    run()\n  end\n", "end\n"), "end\n")
+  MiniTest.expect.equality(context.strip_repeated_prefix("call(a, b)\n", "    )\n"), "    )\n")
+end
+
 return T

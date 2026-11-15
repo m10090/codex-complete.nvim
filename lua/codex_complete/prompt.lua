@@ -13,6 +13,9 @@ M.developer_instructions = table.concat({
   "For kind comment, treat instruction as a request and return only the exact code that replaces that comment.",
   "Never include comment delimiters from the instruction in a comment replacement.",
   "Do not repeat the prefix or suffix, and do not use Markdown fences.",
+  "The cursor sits between line_before_cursor and line_after_cursor on the cursor line.",
+  "Never repeat line_before_cursor or earlier lines: start with the very next character to insert.",
+  "The project field summarises the repository; follow its structure, APIs, and conventions.",
   "The lsp field holds language-server facts for the cursor; prefer its completions and signature over guesses.",
   "The recent_edits and intent fields describe what the developer is doing; continue that work.",
   "Prefer a concise, idiomatic continuation. Return an empty string when no useful completion is clear.",
@@ -26,10 +29,33 @@ M.fast_instructions = table.concat({
   "Return a JSON object with one field named completion.",
   "The completion must contain only the exact text to insert at the cursor.",
   "Do not repeat the prefix or suffix, and do not use Markdown fences.",
+  "The cursor sits between line_before_cursor and line_after_cursor on the cursor line.",
+  "Never repeat line_before_cursor or earlier lines: start with the very next character to insert.",
+  "The project field summarises the repository; follow its structure, APIs, and conventions.",
   "The lsp field holds language-server facts for the cursor; prefer its completions and signature over guesses.",
   "The recent_edits and intent fields describe what the developer is doing; continue that work.",
   "Prefer a concise, idiomatic continuation. Return an empty string when no useful completion is clear.",
 }, " ")
+
+M.brief_instructions = table.concat({
+  "You write a short brief of a code repository for an inline code completion engine.",
+  "You must inspect the repository in the working directory before answering: list its files,",
+  "then read the README, the manifest files, and the main source modules. Do not answer from the request alone.",
+  "Never modify files, access the network, run skill scripts, or ask questions.",
+  "Return a JSON object with one field named brief, at most 1800 characters of plain text covering:",
+  "what the project does, its languages and frameworks, the directory layout, the main modules with",
+  "their key functions and types, and naming, error-handling, and testing conventions.",
+  "Be specific and dense; name real files and symbols you read.",
+}, " ")
+
+M.brief_schema = {
+  type = "object",
+  properties = {
+    brief = { type = "string" },
+  },
+  required = { "brief" },
+  additionalProperties = false,
+}
 
 M.intent_instructions = table.concat({
   "You observe a developer's recent edits and describe what they are working on.",
@@ -50,6 +76,7 @@ M.intent_schema = {
 }
 
 local intent_limit = 1024
+local brief_limit = 2048
 
 --- Selects the developer instructions for a request.
 ---
@@ -81,6 +108,9 @@ function M.build(context)
     cursor = { line = context.row, byte_column = context.col },
     prefix = context.prefix,
     suffix = context.suffix,
+    line_before_cursor = context.kind ~= "comment" and context.prefix:match("[^\n]*$") or nil,
+    line_after_cursor = context.kind ~= "comment" and context.suffix:match("^[^\n]*") or nil,
+    project = context.project,
     related = context.related,
     lsp = context.lsp,
     recent_edits = context.recent_edits,
@@ -110,6 +140,26 @@ function M.build_intent(activity)
   })
 end
 
+--- Extracts one bounded text field from a structured background reply.
+---
+---@param message string|nil
+---@param field string
+---@param limit integer
+---@return string|nil text
+---@return string|nil error
+---
+local function parse_summary(message, field, limit)
+  local ok, decoded = pcall(vim.json.decode, message or "")
+  if not ok or type(decoded) ~= "table" or type(decoded[field]) ~= "string" then
+    return nil, ("Codex returned a malformed %s summary"):format(field)
+  end
+  local text = vim.trim((decoded[field]:gsub("%z", ""):gsub("%s+", " ")))
+  if #text > limit then
+    text = text:sub(1, limit):gsub("[\194-\244][\128-\191]*$", "")
+  end
+  return text
+end
+
 --- Extracts the intent summary from a structured reply.
 ---
 ---@param message string|nil
@@ -117,15 +167,26 @@ end
 ---@return string|nil error
 ---
 function M.parse_intent(message)
-  local ok, decoded = pcall(vim.json.decode, message or "")
-  if not ok or type(decoded) ~= "table" or type(decoded.intent) ~= "string" then
-    return nil, "Codex returned a malformed intent summary"
-  end
-  local intent = vim.trim(decoded.intent:gsub("%z", ""):gsub("%s+", " "))
-  if #intent > intent_limit then
-    intent = intent:sub(1, intent_limit):gsub("[\194-\244][\128-\191]*$", "")
-  end
-  return intent
+  return parse_summary(message, "intent", intent_limit)
+end
+
+--- Extracts the project brief from a structured reply.
+---
+---@param message string|nil
+---@return string|nil brief
+---@return string|nil error
+---
+function M.parse_brief(message)
+  return parse_summary(message, "brief", brief_limit)
+end
+
+--- Builds the request for a project brief.
+---
+---@param root string Repository root.
+---@return string payload
+---
+function M.build_brief(root)
+  return ("Read the repository at %s and write its brief. Start by listing the files."):format(root)
 end
 
 local function remove_fence(value)

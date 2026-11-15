@@ -46,9 +46,8 @@ Continuing to type or leaving insert mode dismisses a visible suggestion. The
 CodexCompleteDismiss command and dismiss() Lua function remain available for
 explicit dismissal.
 
-A standalone, theme-colored inline spinner is shown after the debounce period
-while Codex generates a suggestion. Set loading_indicator to false in setup()
-to disable it.
+No loading indicator is drawn by default. Set loading_indicator to true in
+setup() to show an inline spinner while Codex generates a suggestion.
 
 Suggestion text uses CodexCompleteSuggestion with
 CodexCompleteSuggestionBackground for black text on a dark green (#50A14F)
@@ -189,6 +188,16 @@ A rolling window of recent edits (context.activity) is sent as unified diffs
 with the names of recently visited files. After intent.idle_ms without edits
 and at least intent.min_edits new edits, a background request summarises what
 you are working on; later requests include the summary.
+
+The first time a file inside a Git repository is opened, one background
+request lets Codex read the project and write a brief of its purpose, layout,
+main modules, and conventions. The brief is cached on disk, sent with every
+completion, and rewritten after project_brief.max_age_days. Set
+project_brief.enabled to false to disable it.
+
+                                                       *:CodexCompleteProject*
+:CodexCompleteProject[!]    Show the cached project brief; with ! rewrite it.
+                            The Lua function is project_brief(refresh).
 
                                                         *:CodexCompleteIntent*
 :CodexCompleteIntent        Show the current intent summary. The Lua function

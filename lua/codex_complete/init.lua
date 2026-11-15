@@ -1,6 +1,7 @@
 local M = {}
 
 local activity = require("codex_complete.activity")
+local brief = require("codex_complete.brief")
 local context = require("codex_complete.context")
 local prompt = require("codex_complete.prompt")
 local related = require("codex_complete.related")
@@ -85,6 +86,9 @@ local function with_activity(captured)
   end
   if state.config.intent.enabled then
     captured.intent = state.intent
+  end
+  if state.config.project_brief.enabled then
+    captured.project = brief.get(brief.root(captured.bufnr))
   end
   return captured
 end
@@ -247,6 +251,27 @@ function M._await_suggestion(callback)
     return
   end
   state.waiter = callback
+end
+
+--- Returns the brief of the current buffer's project, optionally rewriting it.
+---
+---@param refresh boolean|nil Ask Codex to write the brief again.
+---@return string|nil brief
+---
+function M.project_brief(refresh)
+  if not state.configured then
+    return nil
+  end
+  local root = brief.root(vim.api.nvim_get_current_buf())
+  if refresh and root and state.enabled then
+    local started = brief.ensure(root, state.engine, state.config, true, function(err)
+      notify(err and ("Project brief failed: " .. err) or "Project brief updated", err and vim.log.levels.ERROR or nil)
+    end)
+    if not started then
+      notify("Codex is busy with another background summary; try again shortly", vim.log.levels.WARN)
+    end
+  end
+  return brief.get(root)
 end
 
 --- Returns the latest background summary of what the developer is working on.
@@ -648,6 +673,7 @@ local function clear_runtime()
     engine:stop()
   end
   activity.reset()
+  brief.reset()
   state.intent = nil
   state.intent_error = nil
   state.cache = {}
@@ -684,6 +710,18 @@ local function create_commands()
     pcall(vim.api.nvim_del_user_command, name)
     vim.api.nvim_create_user_command(name, callback, {})
   end
+  pcall(vim.api.nvim_del_user_command, "CodexCompleteProject")
+  vim.api.nvim_create_user_command("CodexCompleteProject", function(args)
+    local text = M.project_brief(args.bang)
+    if not args.bang then
+      vim.notify(text or "Codex has not written a brief for this project yet", vim.log.levels.INFO, {
+        title = "codex-complete.nvim",
+      })
+    end
+  end, {
+    bang = true,
+    desc = "Show or rewrite the Codex project brief",
+  })
   pcall(vim.api.nvim_del_user_command, "CodexCompleteModel")
   vim.api.nvim_create_user_command("CodexCompleteModel", function(args)
     if args.bang then
@@ -799,6 +837,12 @@ function M.setup(options)
         activity.track(args.buf)
         if args.event == "BufEnter" then
           activity.visit(args.buf)
+        end
+      end
+      if state.config.project_brief.enabled and context.eligible(args.buf, state.config, true) then
+        local root = brief.root(args.buf)
+        if root then
+          brief.ensure(root, state.engine, state.config)
         end
       end
       if

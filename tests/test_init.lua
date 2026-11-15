@@ -222,6 +222,7 @@ end
 T["shows loading until a request becomes a suggestion"] = function()
   plugin.setup({
     auto_trigger = false,
+    loading_indicator = true,
     codex = { command = python_command("--delay"), timeout_ms = 5000 },
   })
   MiniTest.expect.equality(plugin.trigger({ manual = true }), true)
@@ -240,6 +241,7 @@ end
 T["clears loading when a request is cancelled"] = function()
   plugin.setup({
     auto_trigger = false,
+    loading_indicator = true,
     codex = { command = python_command("--delay"), timeout_ms = 5000 },
   })
   plugin.trigger({ manual = true })
@@ -911,6 +913,44 @@ T["does not record activity or summarise intent when disabled"] = function()
   end, 10)
   MiniTest.expect.equality(plugin.intent(), nil)
   MiniTest.expect.equality(plugin.status().engine.client.state, "stopped")
+end
+
+T["sends the cached project brief for files in a repository"] = function()
+  local brief = require("codex_complete.brief")
+  local log = vim.fn.tempname()
+  brief.directory = vim.fn.tempname()
+  plugin.setup({ auto_trigger = false, codex = { command = python_command("--log", log), timeout_ms = 5000 } })
+  vim.cmd("edit " .. vim.fn.fnameescape(vim.fn.getcwd() .. "/tests/fixtures/related/brief_test.lua"))
+  vim.bo.filetype = "lua"
+  MiniTest.expect.equality(
+    vim.wait(5000, function()
+      return plugin.project_brief() ~= nil
+    end, 10),
+    true
+  )
+  MiniTest.expect.equality(plugin.project_brief(), "A mock project brief.")
+  MiniTest.expect.equality(plugin.trigger({ manual = true }), true)
+  vim.wait(5000, function()
+    return plugin.status().suggestion_visible or plugin.status().engine.last_error ~= nil
+  end, 10)
+
+  local turns = {}
+  for _, line in ipairs(vim.fn.readfile(log)) do
+    local message = vim.json.decode(line)
+    if message.method == "turn/start" then
+      turns[#turns + 1] = message.params.input[1].text
+    end
+  end
+  MiniTest.expect.equality(turns[1]:find(vim.fs.normalize(vim.fn.getcwd()), 1, true) ~= nil, true)
+  MiniTest.expect.equality(vim.json.decode(turns[2]).project, "A mock project brief.")
+
+  --- A later session reuses the stored brief without asking again.
+  plugin.setup({ auto_trigger = false, codex = { command = python_command("--log", log), timeout_ms = 5000 } })
+  vim.api.nvim_exec_autocmds("BufEnter", { buffer = 0 })
+  MiniTest.expect.equality(plugin.project_brief(), "A mock project brief.")
+  MiniTest.expect.equality(plugin.status().engine.client.state, "stopped")
+  brief.directory = nil
+  vim.cmd("bwipeout!")
 end
 
 T["pre-starts a thread when entering insert mode"] = function()

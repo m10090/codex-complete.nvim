@@ -190,7 +190,9 @@ for raw_line in sys.stdin:
                     "threadId": params["threadId"],
                     "item": {
                         "type": "agentMessage",
-                        "text": '{"intent":"Building a mock feature."}'
+                        "text": '{"brief":"A mock project brief."}'
+                        if "brief" in params.get("outputSchema", {}).get("properties", {})
+                        else '{"intent":"Building a mock feature."}'
                         if "intent" in params.get("outputSchema", {}).get("properties", {})
                         else '{"completion":" world\\nnext_line()"}',
                     },

@@ -92,8 +92,8 @@ Visible suggestions are dismissed when you continue typing or leave insert
 mode. You can also dismiss them through `:CodexCompleteDismiss` or `dismiss()`.
 
 Automatic suggestions are requested 200 milliseconds after typing stops. Every
-new keystroke resets that timer and cancels an obsolete in-flight request. An
-inline, theme-colored spinner appears while Codex is generating the suggestion.
+new keystroke resets that timer and cancels an obsolete in-flight request. Set
+`loading_indicator = true` to show an inline spinner while Codex is generating.
 
 With `ghost_text = true`, suggestion text uses black text on a dark green
 (`#50A14F`) background applied only behind the ghost text, keeping it distinct
@@ -140,7 +140,7 @@ require("codex_complete").setup({
   enabled = true,
   auto_trigger = true,
   debounce_ms = 200,
-  loading_indicator = true,
+  loading_indicator = false, -- Set to true for an inline spinner while waiting.
   ghost_text = false, -- Set to true to also draw suggestions inline.
   highlights = {
     suggestion = "CodexCompleteSuggestion", -- Black text by default.
@@ -173,6 +173,12 @@ require("codex_complete").setup({
     enabled = true,
     idle_ms = 3000,
     min_edits = 3,
+  },
+  project_brief = { -- Cached description of the repository.
+    enabled = true,
+    max_age_days = 7,
+    timeout_ms = 180 * 1000,
+    effort = "medium",
   },
   suggestion = {
     max_lines = 20,
@@ -233,6 +239,21 @@ With `codex.prewarm` enabled, the app server and the next completion thread
 are started when you enter insert mode and again after each request, so a
 request only has to start a turn.
 
+### Project brief
+
+Because inline completions do not read files, the plugin gives them a brief of
+the repository instead. The first time you open a file inside a Git
+repository, one background request lets Codex read the project and write a
+short description of its purpose, layout, main modules, and conventions. The
+brief is stored under Neovim's cache directory, sent with every completion,
+and rewritten after `project_brief.max_age_days`. `:CodexCompleteProject`
+shows it and `:CodexCompleteProject!` rewrites it now. Writing a brief takes
+around half a minute and counts against your Codex limits; set
+`project_brief.enabled = false` to turn it off.
+
+Completions that only repeat text already before the cursor, or contain only
+whitespace, are discarded.
+
 ### Language-server context
 
 Before each inline request the plugin asks the attached language servers for
@@ -280,6 +301,8 @@ advertised default. Model and effort changes cancel and clear older suggestions.
 | `:CodexCompleteToggle` | `toggle()` | Toggle request handling |
 | `:CodexCompleteDismiss` | `dismiss()` | Clear the current suggestion |
 | `:CodexCompleteIntent` | `intent()` | Show the background summary of your recent edits |
+| `:CodexCompleteProject` | `project_brief()` | Show the cached project brief |
+| `:CodexCompleteProject!` | `project_brief(true)` | Rewrite the project brief |
 | `:CodexCompleteModel` | `select_model()` | Select from available models |
 | `:CodexCompleteModel {id}` | `set_model(id)` | Validate and select a model ID |
 | `:CodexCompleteModel!` | `reset_model()` | Restore the configured default model |
@@ -301,12 +324,15 @@ returns the active model's supported reasoning efforts.
   with filenames and line ranges, language-server signature, completion,
   hover, and diagnostic text for the cursor, and diffs of your recent edits
   with the names of recently visited files. Background intent summaries send
-  the same diffs and file names. Edits in sensitive files are not recorded. Comment requests also include the selected
+  the same diffs and file names. Edits in sensitive files are not recorded.
+  Requests also include the project brief, which Codex writes by reading the
+  repository and which is stored in Neovim's cache directory. Comment requests also include the selected
   comment and replacement range. The local collector excludes sensitive
   filenames and generated directories and respects ignore rules in disk searches.
 - Completion threads are ephemeral, run with a read-only sandbox and approval
   policy of `never`, with network access disabled. Inline completions instruct
-  Codex not to read files; comment replacements and intent summaries may read
+  Codex not to read files; comment replacements, intent summaries, and project
+  briefs may read
   project files, instructions, skills, and references. Codex is instructed not
   to modify files or run skill scripts. Local snippet filters do not govern
   Codex's own file reads.

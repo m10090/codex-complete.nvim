@@ -113,14 +113,15 @@ end
 ---@param thread_id string
 ---@param text string User message.
 ---@param schema table Output schema.
+---@param effort string|nil Reasoning effort; the engine's by default.
 ---@return table params
 ---
-function Engine:_turn_params(thread_id, text, schema)
+function Engine:_turn_params(thread_id, text, schema, effort)
   local params = {
     threadId = thread_id,
     input = { { type = "text", text = text } },
     approvalPolicy = "never",
-    effort = self.effort,
+    effort = effort or self.effort,
     outputSchema = schema,
     sandboxPolicy = { type = "readOnly", networkAccess = false },
   }
@@ -256,23 +257,31 @@ end
 ---@param payload string JSON description of recent edits.
 ---@param cwd string Working directory for the thread.
 ---@param callback fun(err: string|nil, intent: string|nil)
+---@param options table|nil Instructions, schema, parser, and timeout; an intent summary by default.
 ---@return boolean started
 ---
-function Engine:summarize(payload, cwd, callback)
+function Engine:summarize(payload, cwd, callback, options)
   if self.background then
     return false
   end
-  local job = { callback = callback }
+  options = options or {}
+  local job = {
+    callback = callback,
+    instructions = options.instructions or prompt.intent_instructions,
+    schema = options.schema or prompt.intent_schema,
+    parse = options.parse or prompt.parse_intent,
+    effort = options.effort,
+  }
   self.background = job
   job.timeout = vim.uv.new_timer()
   job.timeout:start(
-    self.config.codex.timeout_ms,
+    options.timeout_ms or self.config.codex.timeout_ms,
     0,
     vim.schedule_wrap(function()
       if self.background == job and job.thread_id and job.turn_id then
         self.client:request("turn/interrupt", { threadId = job.thread_id, turnId = job.turn_id }, function() end)
       end
-      self:_end_background(job, "Codex intent summary timed out")
+      self:_end_background(job, "Codex background summary timed out")
     end)
   )
 
@@ -284,7 +293,7 @@ function Engine:summarize(payload, cwd, callback)
       self:_end_background(job, err)
       return
     end
-    local thread_params = self:_thread_params(prompt.intent_instructions, cwd)
+    local thread_params = self:_thread_params(job.instructions, cwd)
     self.client:request("thread/start", thread_params, function(thread_err, result)
       if self.background ~= job then
         return
@@ -294,7 +303,7 @@ function Engine:summarize(payload, cwd, callback)
         self:_end_background(job, thread_err or "Codex app-server returned no thread id")
         return
       end
-      local turn_params = self:_turn_params(job.thread_id, payload, prompt.intent_schema)
+      local turn_params = self:_turn_params(job.thread_id, payload, job.schema, job.effort)
       self.client:request("turn/start", turn_params, function(turn_err, turn_result)
         if self.background ~= job then
           return
@@ -324,10 +333,10 @@ function Engine:_on_background(job, method, params)
   elseif method == "turn/completed" then
     local turn = params.turn or {}
     if turn.status and turn.status ~= "completed" then
-      self:_end_background(job, "Codex intent summary ended with status " .. tostring(turn.status))
+      self:_end_background(job, "Codex background summary ended with status " .. tostring(turn.status))
       return
     end
-    local intent, parse_error = prompt.parse_intent(job.message)
+    local intent, parse_error = job.parse(job.message)
     self:_end_background(job, parse_error, intent)
   elseif method == "error" then
     self:_end_background(job, params.message or "Codex app-server reported an error")
@@ -550,6 +559,12 @@ function Engine:_on_notification(method, params)
       return
     end
     local completion, parse_error = prompt.parse(request.message, self.config)
+    if completion and request.context.kind ~= "comment" then
+      completion = context.strip_repeated_prefix(request.context.prefix, completion)
+      if not completion:find("%S") then
+        completion, parse_error = nil, "Codex did not suggest a completion"
+      end
+    end
     if not completion then
       self:_fail(request, parse_error)
       return

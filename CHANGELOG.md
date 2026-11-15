@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
 - Inline completions are answered in a single response without file or skill
   reads; set `codex.completion_tools = true` to restore them.
 - The default debounce is now 200 milliseconds.
+- The inline loading spinner is now off by default; set
+  `loading_indicator = true` to restore it.
+- Completions that repeat text before the cursor or contain only whitespace
+  are discarded.
 - Inline ghost text is now off by default; set `ghost_text = true` to restore
   it. Suggestions are offered through the completion menu instead.
 - Suggestion ghost text now defaults to black text on a dark green background.
@@ -25,6 +29,8 @@ All notable changes to this project will be documented in this file.
   the request context.
 - A rolling window of recent edits and visited files in the request context.
 - Background intent summaries of recent edits, with `:CodexCompleteIntent`.
+- Cached project briefs sent with every completion, with
+  `:CodexCompleteProject`.
 - A null-ls (none-ls) completion source that offers the current suggestion to
   nvim-cmp and other LSP completion clients.
 - Tree-sitter comment prompts with explicit normal-mode triggering, virtual

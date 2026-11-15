@@ -274,6 +274,28 @@ function M.reconcile_completion(current, completion)
   return completion, paired_delimiter
 end
 
+--- Removes text the model repeated from just before the cursor.
+---
+--- Short overlaps are kept: closers such as `end` legitimately repeat.
+---
+---@param prefix string Buffer text before the cursor.
+---@param completion string
+---@return string completion
+---
+function M.strip_repeated_prefix(prefix, completion)
+  local limit = math.min(#prefix, #completion, 400)
+  for length = limit, 8, -1 do
+    local overlap = completion:sub(1, length)
+    if prefix:sub(-length) == overlap then
+      local _, visible = overlap:gsub("%S", "")
+      if visible >= 6 then
+        return completion:sub(length + 1)
+      end
+    end
+  end
+  return completion
+end
+
 function M.cached_remainder(cached, current, completion)
   if
     not cached

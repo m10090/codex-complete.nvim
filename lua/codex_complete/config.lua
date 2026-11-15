@@ -4,7 +4,7 @@ local defaults = {
   enabled = true,
   auto_trigger = true,
   debounce_ms = 200,
-  loading_indicator = true,
+  loading_indicator = false,
   ghost_text = false,
   highlights = {
     suggestion = "CodexCompleteSuggestion",
@@ -37,6 +37,12 @@ local defaults = {
     enabled = true,
     idle_ms = 3000,
     min_edits = 3,
+  },
+  project_brief = {
+    enabled = true,
+    max_age_days = 7,
+    timeout_ms = 180 * 1000,
+    effort = "medium",
   },
   suggestion = {
     max_lines = 20,
@@ -226,6 +232,14 @@ function M.resolve(opts)
   end
   validate_number("intent.idle_ms", value.intent.idle_ms, 0)
   validate_number("intent.min_edits", value.intent.min_edits, 1)
+  if type(value.project_brief.enabled) ~= "boolean" then
+    error("codex-complete: project_brief.enabled must be a boolean")
+  end
+  if type(value.project_brief.effort) ~= "string" or value.project_brief.effort == "" then
+    error("codex-complete: project_brief.effort must be a non-empty string")
+  end
+  validate_number("project_brief.max_age_days", value.project_brief.max_age_days, 0)
+  validate_number("project_brief.timeout_ms", value.project_brief.timeout_ms, 1000)
   if type(value.codex.prewarm) ~= "boolean" then
     error("codex-complete: codex.prewarm must be a boolean")
   end
