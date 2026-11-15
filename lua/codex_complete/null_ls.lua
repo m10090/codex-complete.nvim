@@ -9,6 +9,8 @@ local M = {}
 --- LSP has no custom kinds; Event is rarely used by language servers.
 local event_kind = 23
 local marker = "Codex"
+--- Long enough for nvim-cmp to list an answer it accepted.
+local menu_delay_ms = 150
 local plain_text_format = 1
 local label_limit = 60
 local registered = false
@@ -76,6 +78,16 @@ function M.item(captured, completion, replace_length, encoding)
   }
 end
 
+--- Tells whether a completion item came from this plugin.
+---
+---@param entry table nvim-cmp entry.
+---@return boolean codex
+---
+local function is_codex(entry)
+  local data = entry and entry.completion_item and entry.completion_item.data
+  return type(data) == "table" and data.codex_complete == true
+end
+
 --- Marks Codex entries in an nvim-cmp menu with their own kind.
 ---
 --- Call it from `formatting.format` after any existing formatter.
@@ -86,13 +98,54 @@ end
 ---@return table item
 ---
 function M.cmp_format(entry, item, label)
-  local data = entry and entry.completion_item and entry.completion_item.data
-  if type(data) == "table" and data.codex_complete then
+  if is_codex(entry) then
     item.kind = label or marker
     item.kind_hl_group = "CodexCompleteKind"
     item.menu = nil
   end
   return item
+end
+
+--- Opens the nvim-cmp menu showing only the Codex suggestion.
+---
+---@return boolean opened
+---
+function M.open_menu()
+  local cmp = package.loaded["cmp"]
+  if not cmp or vim.api.nvim_get_mode().mode:sub(1, 1) ~= "i" then
+    return false
+  end
+  cmp.complete({ config = { sources = { { name = "nvim_lsp", entry_filter = is_codex } } } })
+  return true
+end
+
+--- Opens the menu shortly after a suggestion arrives unless nvim-cmp already lists it.
+---
+--- nvim-cmp only asks for completions while a word or trigger character is
+--- typed, and drops answers to requests made before the latest keystroke.
+---
+---@param captured table Context of the suggestion.
+---
+function M.ensure_menu(captured)
+  if not package.loaded["cmp"] then
+    return
+  end
+  vim.defer_fn(function()
+    local cmp = package.loaded["cmp"]
+    local visible = require("codex_complete.ui").current()
+    if not cmp or not visible or visible.context ~= captured then
+      return
+    end
+    if not require("codex_complete.context").is_current(captured) then
+      return
+    end
+    for _, entry in ipairs(cmp.get_entries()) do
+      if is_codex(entry) then
+        return
+      end
+    end
+    M.open_menu()
+  end, menu_delay_ms)
 end
 
 --- Answers a null-ls completion request once a suggestion is available.

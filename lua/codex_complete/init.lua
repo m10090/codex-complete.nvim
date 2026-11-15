@@ -65,6 +65,9 @@ local function show(captured, completion, paired_delimiter)
     render = state.config.ghost_text,
   })
   resolve_waiter(captured, completion, paired_delimiter and paired_delimiter.replace_length or 0)
+  if state.config.open_menu then
+    require("codex_complete.null_ls").ensure_menu(captured)
+  end
 end
 
 local function cancel_work()

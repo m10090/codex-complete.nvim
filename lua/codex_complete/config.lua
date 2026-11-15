@@ -6,6 +6,7 @@ local defaults = {
   debounce_ms = 200,
   loading_indicator = false,
   ghost_text = false,
+  open_menu = true,
   highlights = {
     suggestion = "CodexCompleteSuggestion",
     background = "CodexCompleteSuggestionBackground",
@@ -188,6 +189,9 @@ function M.resolve(opts)
   validate_number("debounce_ms", value.debounce_ms, 0)
   if type(value.loading_indicator) ~= "boolean" then
     error("codex-complete: loading_indicator must be a boolean")
+  end
+  if type(value.open_menu) ~= "boolean" then
+    error("codex-complete: open_menu must be a boolean")
   end
   if type(value.ghost_text) ~= "boolean" then
     error("codex-complete: ghost_text must be a boolean")

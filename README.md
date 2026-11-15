@@ -73,6 +73,13 @@ requests itself; it answers once the automatic or manual request finishes, so
 the entry appears a moment after the rest of the menu. Other null-ls
 completion sources wait for it during that time.
 
+nvim-cmp only asks for completions while you type a word or a trigger
+character, and ignores answers to requests made before your latest keystroke.
+When a suggestion arrives and nvim-cmp is not already listing it, such as
+after a space or after the manual trigger key (`<M-s>`), the plugin opens the
+nvim-cmp menu itself, showing only the Codex entry. Set `open_menu = false`
+to disable this.
+
 Entries are marked as Codex suggestions: their detail reads "Codex" and they
 use the `Event` kind, which language servers rarely produce. In nvim-cmp you
 can give them a kind of their own by wrapping your formatter:
@@ -158,6 +165,7 @@ require("codex_complete").setup({
   debounce_ms = 200,
   loading_indicator = false, -- Set to true for an inline spinner while waiting.
   ghost_text = false, -- Set to true to also draw suggestions inline.
+  open_menu = true, -- Open the nvim-cmp menu when a suggestion is not listed.
   highlights = {
     suggestion = "CodexCompleteSuggestion", -- Black text by default.
     background = "CodexCompleteSuggestionBackground", -- Dark green; set to false for no background.

@@ -172,6 +172,54 @@ T["answers a superseded or abandoned request with no items"] = function()
   MiniTest.expect.equality(second[1].items, {})
 end
 
+T["opens an nvim-cmp menu limited to Codex entries unless one is listed"] = function()
+  local calls = {}
+  local entries = {}
+  package.loaded["cmp"] = {
+    complete = function(options)
+      calls[#calls + 1] = options
+    end,
+    get_entries = function()
+      return entries
+    end,
+  }
+  local get_mode = vim.api.nvim_get_mode
+  vim.api.nvim_get_mode = function()
+    return { mode = "i", blocking = false }
+  end
+  local function suggest(options)
+    plugin.setup(vim.tbl_extend("force", {
+      auto_trigger = false,
+      codex = { command = python_command(), timeout_ms = 5000 },
+    }, options or {}))
+    MiniTest.expect.equality(plugin.trigger({ manual = true }), true)
+    wait_for(function()
+      return plugin.status().suggestion_visible
+    end)
+    vim.wait(300, function()
+      return false
+    end, 10)
+  end
+
+  suggest()
+  MiniTest.expect.equality(#calls, 1)
+  local configured = calls[1].config.sources[1]
+  MiniTest.expect.equality(configured.name, "nvim_lsp")
+  MiniTest.expect.equality(configured.entry_filter({ completion_item = { data = { codex_complete = true } } }), true)
+  MiniTest.expect.equality(configured.entry_filter({ completion_item = { label = "print" } }), false)
+
+  --- A menu already listing the Codex entry is left alone.
+  entries = { { completion_item = { label = "print" } }, { completion_item = { data = { codex_complete = true } } } }
+  suggest()
+  MiniTest.expect.equality(#calls, 1)
+
+  entries = {}
+  suggest({ open_menu = false })
+  MiniTest.expect.equality(#calls, 1)
+  package.loaded["cmp"] = nil
+  vim.api.nvim_get_mode = get_mode
+end
+
 T["does not register without null-ls installed"] = function()
   MiniTest.expect.equality(source.register(), false)
 end
