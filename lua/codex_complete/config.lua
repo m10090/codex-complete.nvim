@@ -3,8 +3,9 @@ local M = {}
 local defaults = {
   enabled = true,
   auto_trigger = true,
-  debounce_ms = 300,
+  debounce_ms = 200,
   loading_indicator = true,
+  ghost_text = false,
   highlights = {
     suggestion = "CodexCompleteSuggestion",
     background = "CodexCompleteSuggestionBackground",
@@ -20,6 +21,22 @@ local defaults = {
       max_bytes = 16 * 1024,
       max_snippets = 8,
     },
+    lsp = {
+      enabled = true,
+      timeout_ms = 150,
+      max_completions = 40,
+      max_hover = 3,
+    },
+    activity = {
+      enabled = true,
+      max_edits = 8,
+      max_bytes = 4 * 1024,
+    },
+  },
+  intent = {
+    enabled = true,
+    idle_ms = 3000,
+    min_edits = 3,
   },
   suggestion = {
     max_lines = 20,
@@ -30,6 +47,8 @@ local defaults = {
     model = "gpt-5.6-luna",
     effort = "low",
     timeout_ms = 30 * 1000,
+    prewarm = true,
+    completion_tools = false,
   },
   keymaps = {
     accept = "<M-;>",
@@ -164,6 +183,9 @@ function M.resolve(opts)
   if type(value.loading_indicator) ~= "boolean" then
     error("codex-complete: loading_indicator must be a boolean")
   end
+  if type(value.ghost_text) ~= "boolean" then
+    error("codex-complete: ghost_text must be a boolean")
+  end
   if type(value.highlights) ~= "table" then
     error("codex-complete: highlights must be a table")
   end
@@ -188,6 +210,28 @@ function M.resolve(opts)
   validate_number("context.related.timeout_ms", value.context.related.timeout_ms, 0)
   validate_number("context.related.max_bytes", value.context.related.max_bytes, 256)
   validate_number("context.related.max_snippets", value.context.related.max_snippets, 1)
+  if type(value.context.lsp.enabled) ~= "boolean" then
+    error("codex-complete: context.lsp.enabled must be a boolean")
+  end
+  validate_number("context.lsp.timeout_ms", value.context.lsp.timeout_ms, 0)
+  validate_number("context.lsp.max_completions", value.context.lsp.max_completions, 0)
+  validate_number("context.lsp.max_hover", value.context.lsp.max_hover, 0)
+  if type(value.context.activity.enabled) ~= "boolean" then
+    error("codex-complete: context.activity.enabled must be a boolean")
+  end
+  validate_number("context.activity.max_edits", value.context.activity.max_edits, 1)
+  validate_number("context.activity.max_bytes", value.context.activity.max_bytes, 256)
+  if type(value.intent.enabled) ~= "boolean" then
+    error("codex-complete: intent.enabled must be a boolean")
+  end
+  validate_number("intent.idle_ms", value.intent.idle_ms, 0)
+  validate_number("intent.min_edits", value.intent.min_edits, 1)
+  if type(value.codex.prewarm) ~= "boolean" then
+    error("codex-complete: codex.prewarm must be a boolean")
+  end
+  if type(value.codex.completion_tools) ~= "boolean" then
+    error("codex-complete: codex.completion_tools must be a boolean")
+  end
   validate_number("suggestion.max_lines", value.suggestion.max_lines, 1)
   validate_number("suggestion.max_bytes", value.suggestion.max_bytes, 1)
   validate_number("codex.timeout_ms", value.codex.timeout_ms, 1000)

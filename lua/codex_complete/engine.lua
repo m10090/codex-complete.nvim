@@ -2,6 +2,7 @@ local context = require("codex_complete.context")
 local Client = require("codex_complete.client")
 local prompt = require("codex_complete.prompt")
 local related = require("codex_complete.related")
+local hints = require("codex_complete.hints")
 
 local Engine = {}
 Engine.__index = Engine
@@ -22,6 +23,9 @@ function Engine.new(config, callbacks)
       self:_on_notification(method, params)
     end,
     on_exit = function(message)
+      self.warm = nil
+      self.warming = false
+      self:_end_background(self.background, message)
       self:_fail_active(message)
     end,
   })
@@ -83,46 +87,108 @@ function Engine:_fail_active(message)
   end
 end
 
-function Engine:_start_turn(request)
-  local thread_params = {
-    cwd = request.context.cwd,
+--- Builds the parameters for a new ephemeral, read-only thread.
+---
+---@param instructions string Developer instructions for the thread.
+---@param cwd string Working directory of the thread.
+---@return table params
+---
+function Engine:_thread_params(instructions, cwd)
+  local params = {
+    cwd = cwd,
     ephemeral = true,
     approvalPolicy = "never",
     sandbox = "read-only",
-    developerInstructions = prompt.developer_instructions,
+    developerInstructions = instructions,
     serviceName = "codex-complete.nvim",
   }
   if self.model then
-    thread_params.model = self.model
+    params.model = self.model
   end
+  return params
+end
 
-  self.client:request("thread/start", thread_params, function(err, result)
-    if not self:_is_active(request) then
-      return
-    end
-    if err then
-      self:_fail(request, "Could not start Codex completion thread: " .. err)
-      return
-    end
-    request.thread_id = result and result.thread and result.thread.id
-    if not request.thread_id then
-      self:_fail(request, "Codex app-server returned no thread id")
-      return
-    end
+--- Builds the parameters for a read-only turn with structured output.
+---
+---@param thread_id string
+---@param text string User message.
+---@param schema table Output schema.
+---@return table params
+---
+function Engine:_turn_params(thread_id, text, schema)
+  local params = {
+    threadId = thread_id,
+    input = { { type = "text", text = text } },
+    approvalPolicy = "never",
+    effort = self.effort,
+    outputSchema = schema,
+    sandboxPolicy = { type = "readOnly", networkAccess = false },
+  }
+  if self.model then
+    params.model = self.model
+  end
+  return params
+end
 
-    local turn_params = {
-      threadId = request.thread_id,
-      input = { { type = "text", text = prompt.build(request.context) } },
-      approvalPolicy = "never",
-      effort = self.effort,
-      outputSchema = prompt.output_schema,
-      sandboxPolicy = { type = "readOnly", networkAccess = false },
-    }
-    if self.model then
-      turn_params.model = self.model
+--- Starts a completion thread ahead of time so the next request skips that round trip.
+---
+---@param cwd string Working directory the next request is expected to use.
+---
+function Engine:prewarm(cwd)
+  local warm = self.warm
+  if self.warming or (warm and warm.cwd == cwd and warm.model == self.model) then
+    return
+  end
+  self.warming = true
+  local model = self.model
+  local client = self.client
+  client:start(function(err)
+    if err or self.client ~= client then
+      self.warming = false
+      return
     end
+    local params = self:_thread_params(prompt.instructions("completion", self.config), cwd)
+    client:request("thread/start", params, function(thread_err, result)
+      self.warming = false
+      local thread_id = not thread_err and result and result.thread and result.thread.id
+      if thread_id and model == self.model then
+        self.warm = { thread_id = thread_id, cwd = cwd, model = model }
+      end
+    end)
+  end)
+end
+
+--- Claims the pre-started thread when it matches the request.
+---
+---@param request table
+---@return string|nil thread_id
+---
+function Engine:_take_warm(request)
+  local warm = self.warm
+  if not warm or request.context.kind == "comment" then
+    return nil
+  end
+  self.warm = nil
+  if warm.cwd == request.context.cwd and warm.model == self.model and self.client.state == "ready" then
+    return warm.thread_id
+  end
+  return nil
+end
+
+function Engine:_start_turn(request)
+  local start_thread
+
+  local function start_on(thread_id, warm)
+    request.thread_id = thread_id
+    local turn_params = self:_turn_params(thread_id, prompt.build(request.context), prompt.output_schema)
     self.client:request("turn/start", turn_params, function(turn_err, turn_result)
       if not self:_is_active(request) then
+        return
+      end
+      if turn_err and warm then
+        --- A pre-started thread may have expired; retry once on a fresh one.
+        request.thread_id = nil
+        start_thread()
         return
       end
       if turn_err then
@@ -134,7 +200,138 @@ function Engine:_start_turn(request)
         self:_fail(request, "Codex app-server returned no turn id")
       end
     end)
+    if self.config.codex.prewarm and request.context.kind ~= "comment" and self:_is_active(request) then
+      self:prewarm(request.context.cwd)
+    end
+  end
+
+  start_thread = function()
+    local instructions = prompt.instructions(request.context.kind, self.config)
+    local thread_params = self:_thread_params(instructions, request.context.cwd)
+    self.client:request("thread/start", thread_params, function(err, result)
+      if not self:_is_active(request) then
+        return
+      end
+      if err then
+        self:_fail(request, "Could not start Codex completion thread: " .. err)
+        return
+      end
+      local thread_id = result and result.thread and result.thread.id
+      if not thread_id then
+        self:_fail(request, "Codex app-server returned no thread id")
+        return
+      end
+      start_on(thread_id, false)
+    end)
+  end
+
+  local warm_thread = self:_take_warm(request)
+  if warm_thread then
+    start_on(warm_thread, true)
+  else
+    start_thread()
+  end
+end
+
+--- Finishes the background summary exactly once.
+---
+---@param job table|nil
+---@param err string|nil
+---@param intent string|nil
+---
+function Engine:_end_background(job, err, intent)
+  if not job or self.background ~= job then
+    return
+  end
+  self.background = nil
+  if job.timeout then
+    job.timeout:stop()
+    job.timeout:close()
+  end
+  job.callback(err, intent)
+end
+
+--- Summarises recent activity on a separate thread without blocking completions.
+---
+---@param payload string JSON description of recent edits.
+---@param cwd string Working directory for the thread.
+---@param callback fun(err: string|nil, intent: string|nil)
+---@return boolean started
+---
+function Engine:summarize(payload, cwd, callback)
+  if self.background then
+    return false
+  end
+  local job = { callback = callback }
+  self.background = job
+  job.timeout = vim.uv.new_timer()
+  job.timeout:start(
+    self.config.codex.timeout_ms,
+    0,
+    vim.schedule_wrap(function()
+      if self.background == job and job.thread_id and job.turn_id then
+        self.client:request("turn/interrupt", { threadId = job.thread_id, turnId = job.turn_id }, function() end)
+      end
+      self:_end_background(job, "Codex intent summary timed out")
+    end)
+  )
+
+  self.client:start(function(err)
+    if self.background ~= job then
+      return
+    end
+    if err then
+      self:_end_background(job, err)
+      return
+    end
+    local thread_params = self:_thread_params(prompt.intent_instructions, cwd)
+    self.client:request("thread/start", thread_params, function(thread_err, result)
+      if self.background ~= job then
+        return
+      end
+      job.thread_id = not thread_err and result and result.thread and result.thread.id
+      if not job.thread_id then
+        self:_end_background(job, thread_err or "Codex app-server returned no thread id")
+        return
+      end
+      local turn_params = self:_turn_params(job.thread_id, payload, prompt.intent_schema)
+      self.client:request("turn/start", turn_params, function(turn_err, turn_result)
+        if self.background ~= job then
+          return
+        end
+        job.turn_id = not turn_err and turn_result and turn_result.turn and turn_result.turn.id
+        if not job.turn_id then
+          self:_end_background(job, turn_err or "Codex app-server returned no turn id")
+        end
+      end)
+    end)
   end)
+  return true
+end
+
+--- Routes a notification belonging to the background summary.
+---
+---@param job table
+---@param method string
+---@param params table
+---
+function Engine:_on_background(job, method, params)
+  if method == "item/completed" then
+    local item = params.item or {}
+    if item.type == "agentMessage" and item.text and item.phase ~= "commentary" then
+      job.message = item.text
+    end
+  elseif method == "turn/completed" then
+    local turn = params.turn or {}
+    if turn.status and turn.status ~= "completed" then
+      self:_end_background(job, "Codex intent summary ended with status " .. tostring(turn.status))
+      return
+    end
+    local intent, parse_error = prompt.parse_intent(job.message)
+    self:_end_background(job, parse_error, intent)
+  elseif method == "error" then
+    self:_end_background(job, params.message or "Codex app-server reported an error")
+  end
 end
 
 function Engine:list_models(options, callback)
@@ -227,6 +424,7 @@ end
 
 function Engine:set_model(model)
   self.model = model
+  self.warm = nil
 end
 
 function Engine:set_effort(effort)
@@ -271,13 +469,25 @@ function Engine:request(captured_context, manual)
       self:_fail(request, err)
       return
     end
-    request.cancel_context = related.collect(captured_context, self.config, function()
+    --- Project snippets and language-server facts are gathered in parallel.
+    local remaining = 2
+    local function ready()
+      remaining = remaining - 1
+      if remaining > 0 then
+        return
+      end
       if self:_is_active(request) and context.is_current(captured_context) then
         self:_start_turn(request)
       elseif self:_is_active(request) then
         self:cancel()
       end
-    end)
+    end
+    local cancel_related = related.collect(captured_context, self.config, ready)
+    local cancel_hints = hints.collect(captured_context, self.config, ready)
+    request.cancel_context = function()
+      cancel_related()
+      cancel_hints()
+    end
   end)
 end
 
@@ -315,6 +525,12 @@ function Engine:_matches(params)
 end
 
 function Engine:_on_notification(method, params)
+  local job = self.background
+  local thread_id = params.threadId or (params.turn and params.turn.threadId)
+  if job and thread_id and thread_id == job.thread_id then
+    self:_on_background(job, method, params)
+    return
+  end
   local request = self.active
   if not request or not self:_matches(params) then
     return
@@ -348,6 +564,9 @@ end
 
 function Engine:stop()
   self:cancel()
+  self.warm = nil
+  self.warming = false
+  self:_end_background(self.background, "Codex app-server stopped")
   self.client:stop()
 end
 
@@ -361,6 +580,8 @@ function Engine:status()
     client = self.client:status(),
     context = self.active and self.active.context.retrieval or self.last_retrieval,
     duration_ms = self.last_duration_ms,
+    warm = self.warm ~= nil,
+    summarizing = self.background ~= nil,
   }
 end
 

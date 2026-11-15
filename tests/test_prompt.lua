@@ -52,4 +52,47 @@ T["rejects malformed and oversized output"] = function()
   MiniTest.expect.equality(type(oversized), "string")
 end
 
+T["uses tool-free instructions for inline completions only"] = function()
+  local value = config.resolve()
+  MiniTest.expect.equality(prompt.instructions("completion", value), prompt.fast_instructions)
+  MiniTest.expect.equality(prompt.instructions(nil, value), prompt.fast_instructions)
+  MiniTest.expect.equality(prompt.instructions("comment", value), prompt.developer_instructions)
+  local with_tools = config.resolve({ codex = { completion_tools = true } })
+  MiniTest.expect.equality(prompt.instructions("completion", with_tools), prompt.developer_instructions)
+  MiniTest.expect.equality(prompt.fast_instructions:find("Never read files", 1, true) ~= nil, true)
+end
+
+T["includes language-server facts, recent edits, and intent in the payload"] = function()
+  local decoded = vim.json.decode(prompt.build({
+    filename = "example.lua",
+    filetype = "lua",
+    row = 1,
+    col = 0,
+    prefix = "",
+    suffix = "",
+    lsp = { completions = { "print" } },
+    recent_edits = { { filename = "example.lua", diff = "+local a = 1\n" } },
+    recent_files = { "example.lua" },
+    intent = "Adding a counter.",
+  }))
+  MiniTest.expect.equality(decoded.lsp, { completions = { "print" } })
+  MiniTest.expect.equality(decoded.recent_edits[1].diff, "+local a = 1\n")
+  MiniTest.expect.equality(decoded.recent_files, { "example.lua" })
+  MiniTest.expect.equality(decoded.intent, "Adding a counter.")
+end
+
+T["builds and parses intent summaries"] = function()
+  local payload = vim.json.decode(prompt.build_intent({
+    recent_edits = { { filename = "a.lua", diff = "+x\n" } },
+    recent_files = { "a.lua" },
+    intent = "Earlier goal.",
+  }))
+  MiniTest.expect.equality(payload.previous_intent, "Earlier goal.")
+  MiniTest.expect.equality(payload.recent_edits[1].filename, "a.lua")
+  MiniTest.expect.equality(prompt.parse_intent('{"intent":"  Adding\\n a counter. "}'), "Adding a counter.")
+  local _, malformed = prompt.parse_intent("not json")
+  MiniTest.expect.equality(type(malformed), "string")
+  MiniTest.expect.equality(#prompt.parse_intent(vim.json.encode({ intent = string.rep("é", 2000) })) <= 1024, true)
+end
+
 return T

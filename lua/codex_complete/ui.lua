@@ -154,11 +154,8 @@ local function mask_existing_closer(context, replace_length)
   })
 end
 
-function M.show(context, completion, options)
-  M.dismiss()
-  options = options or {}
-  local highlights = options.highlights or default_highlights
-  local paired_delimiter = options.paired_delimiter
+--- Draws a suggestion as ghost text at its captured cursor.
+local function render_suggestion(context, completion, highlights, paired_delimiter)
   if paired_delimiter then
     local closer_index = paired_delimiter.closer_index
     local before_closer = completion:sub(1, closer_index - 1)
@@ -176,6 +173,16 @@ function M.show(context, completion, options)
     end
   else
     render_completion(context, completion, context.col, highlights)
+  end
+end
+
+function M.show(context, completion, options)
+  M.dismiss()
+  options = options or {}
+  local highlights = options.highlights or default_highlights
+  local paired_delimiter = options.paired_delimiter
+  if options.render ~= false then
+    render_suggestion(context, completion, highlights, paired_delimiter)
   end
   suggestion = {
     context = context,

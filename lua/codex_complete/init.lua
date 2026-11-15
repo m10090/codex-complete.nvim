@@ -1,6 +1,8 @@
 local M = {}
 
+local activity = require("codex_complete.activity")
 local context = require("codex_complete.context")
+local prompt = require("codex_complete.prompt")
 local related = require("codex_complete.related")
 local config_module = require("codex_complete.config")
 local Engine = require("codex_complete.engine")
@@ -16,6 +18,11 @@ local state = {
   mappings = {},
   cache = {},
   accepted_changedtick = {},
+  waiter = nil,
+  intent = nil,
+  intent_error = nil,
+  intent_revision = 0,
+  intent_timer = nil,
 }
 
 local function notify(message, level)
@@ -35,10 +42,98 @@ local function stop_timer()
   end
 end
 
+--- Answers the pending null-ls completion request, if any.
+---
+---@param captured table|nil Context of the visible suggestion.
+---@param completion string|nil Suggestion text.
+---@param replace_length integer|nil Bytes after the cursor the suggestion replaces.
+---
+local function resolve_waiter(captured, completion, replace_length)
+  local waiter = state.waiter
+  state.waiter = nil
+  if waiter then
+    waiter(captured, completion, replace_length)
+  end
+end
+
+--- Records the suggestion, optionally as ghost text, and hands it to a waiting null-ls request.
+local function show(captured, completion, paired_delimiter)
+  ui.show(captured, completion, {
+    paired_delimiter = paired_delimiter,
+    highlights = state.config.highlights,
+    render = state.config.ghost_text,
+  })
+  resolve_waiter(captured, completion, paired_delimiter and paired_delimiter.replace_length or 0)
+end
+
 local function cancel_work()
   stop_timer()
   if state.engine then
     state.engine:cancel()
+  end
+end
+
+--- Attaches the rolling activity window and intent summary to a request.
+---
+---@param captured table
+---@return table captured
+---
+local function with_activity(captured)
+  local options = state.config.context.activity
+  if options.enabled then
+    captured.recent_edits, captured.recent_files = activity.snapshot(options)
+  end
+  if state.config.intent.enabled then
+    captured.intent = state.intent
+  end
+  return captured
+end
+
+--- Asks Codex in the background what the recent edits are working towards.
+---
+local function summarize_intent()
+  if not state.enabled or not state.config.intent.enabled then
+    return
+  end
+  local revision = activity.revision()
+  if revision - state.intent_revision < state.config.intent.min_edits then
+    return
+  end
+  local edits, files = activity.snapshot(state.config.context.activity)
+  if not edits then
+    return
+  end
+  local bufnr = vim.api.nvim_get_current_buf()
+  local root = related.project({ bufnr = bufnr, filename = vim.api.nvim_buf_get_name(bufnr) })
+  local engine = state.engine
+  local payload = prompt.build_intent({ recent_edits = edits, recent_files = files, intent = state.intent })
+  local started = engine:summarize(payload, root, function(err, intent)
+    if state.engine ~= engine then
+      return
+    end
+    state.intent_error = err
+    if not err and intent ~= "" then
+      state.intent = intent
+    end
+  end)
+  if started then
+    --- Failures also advance the revision so a broken login is not retried on every pause.
+    state.intent_revision = revision
+  end
+end
+
+--- Records the latest edit and schedules a summary once editing pauses.
+---
+---@param bufnr integer
+---
+local function record_activity(bufnr)
+  local options = state.config.context.activity
+  if not state.enabled or not options.enabled or not context.eligible(bufnr, state.config, true) then
+    return
+  end
+  if activity.record(bufnr, options) and state.config.intent.enabled then
+    state.intent_timer:stop()
+    state.intent_timer:start(state.config.intent.idle_ms, 0, vim.schedule_wrap(summarize_intent))
   end
 end
 
@@ -79,7 +174,7 @@ function M.trigger(options)
   if state.config.loading_indicator then
     ui.show_loading(captured)
   end
-  state.engine:request(captured, manual)
+  state.engine:request(with_activity(captured), manual)
   return true
 end
 
@@ -114,7 +209,7 @@ function M.trigger_comment()
   if state.config.loading_indicator then
     ui.show_loading(captured)
   end
-  state.engine:request(captured, true)
+  state.engine:request(with_activity(captured), true)
   return true
 end
 
@@ -132,6 +227,34 @@ function M.accept()
     state.accepted_changedtick[bufnr] = vim.api.nvim_buf_get_changedtick(bufnr)
   end
   return accepted
+end
+
+--- Waits for the next inline suggestion on behalf of the null-ls source.
+---
+--- A newer call supersedes an older one, which is answered with no suggestion.
+---
+---@param callback fun(captured: table|nil, completion: string|nil, replace_length: integer|nil)
+---
+function M._await_suggestion(callback)
+  resolve_waiter()
+  if not state.configured or not state.enabled then
+    callback()
+    return
+  end
+  local visible = ui.current()
+  if visible and visible.context.kind == "completion" and context.is_current(visible.context) then
+    callback(visible.context, visible.completion, visible.replace_length)
+    return
+  end
+  state.waiter = callback
+end
+
+--- Returns the latest background summary of what the developer is working on.
+---
+---@return string|nil intent
+---
+function M.intent()
+  return state.intent
 end
 
 function M.dismiss()
@@ -154,6 +277,10 @@ function M.disable()
     return false
   end
   state.enabled = false
+  if state.intent_timer then
+    state.intent_timer:stop()
+  end
+  resolve_waiter()
   cancel_work()
   ui.dismiss()
   redraw_statusline()
@@ -443,6 +570,11 @@ function M.status()
       current = state.engine and state.engine.effort or nil,
       default = state.config and state.config.codex.effort or nil,
     },
+    intent = {
+      text = state.intent,
+      error = state.intent_error,
+      pending = state.engine ~= nil and state.engine.background ~= nil,
+    },
     engine = state.engine and state.engine:status() or nil,
   }
 end
@@ -472,10 +604,7 @@ local function schedule_auto(args)
     if remainder == "" then
       return
     elseif remainder then
-      ui.show(captured, remainder, {
-        paired_delimiter = paired_delimiter,
-        highlights = state.config.highlights,
-      })
+      show(captured, remainder, paired_delimiter)
       return
     end
   end
@@ -508,13 +637,22 @@ local function clear_runtime()
     state.timer:close()
     state.timer = nil
   end
+  if state.intent_timer then
+    state.intent_timer:stop()
+    state.intent_timer:close()
+    state.intent_timer = nil
+  end
   if state.engine then
     local engine = state.engine
     state.engine = nil
     engine:stop()
   end
+  activity.reset()
+  state.intent = nil
+  state.intent_error = nil
   state.cache = {}
   state.accepted_changedtick = {}
+  resolve_waiter()
   ui.dismiss()
 end
 
@@ -536,6 +674,11 @@ local function create_commands()
     CodexCompleteDisable = M.disable,
     CodexCompleteToggle = M.toggle,
     CodexCompleteDismiss = M.dismiss,
+    CodexCompleteIntent = function()
+      vim.notify(state.intent or "Codex has not summarised your recent edits yet", vim.log.levels.INFO, {
+        title = "codex-complete.nvim",
+      })
+    end,
   }
   for name, callback in pairs(commands) do
     pcall(vim.api.nvim_del_user_command, name)
@@ -586,6 +729,8 @@ function M.setup(options)
   state.config = config_module.resolve(options)
   state.enabled = state.config.enabled
   state.timer = vim.uv.new_timer()
+  state.intent_timer = vim.uv.new_timer()
+  state.intent_revision = activity.revision()
   state.engine = Engine.new(state.config, {
     on_finished = function(captured)
       ui.dismiss(captured.bufnr)
@@ -602,10 +747,7 @@ function M.setup(options)
         return
       end
       state.cache[captured.bufnr] = { context = captured, completion = reconciled }
-      ui.show(captured, reconciled, {
-        paired_delimiter = paired_delimiter,
-        highlights = state.config.highlights,
-      })
+      show(captured, reconciled, paired_delimiter)
     end,
     on_error = function(message)
       notify(message, vim.log.levels.ERROR)
@@ -638,12 +780,48 @@ function M.setup(options)
   vim.api.nvim_create_autocmd({ "InsertLeave", "BufLeave", "BufDelete", "TextChanged" }, {
     group = group,
     callback = function(args)
+      resolve_waiter()
       cancel_work()
       ui.dismiss()
       if args.event == "BufDelete" then
         state.cache[args.buf] = nil
         state.accepted_changedtick[args.buf] = nil
       end
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "BufEnter", "InsertEnter" }, {
+    group = group,
+    callback = function(args)
+      if not state.enabled then
+        return
+      end
+      if state.config.context.activity.enabled and context.eligible(args.buf, state.config, true) then
+        activity.track(args.buf)
+        if args.event == "BufEnter" then
+          activity.visit(args.buf)
+        end
+      end
+      if
+        args.event == "InsertEnter"
+        and state.config.auto_trigger
+        and state.config.codex.prewarm
+        and context.eligible(args.buf, state.config, false)
+      then
+        local _, cwd = related.project({ bufnr = args.buf, filename = vim.api.nvim_buf_get_name(args.buf) })
+        state.engine:prewarm(cwd)
+      end
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "InsertLeave", "TextChanged", "BufWritePost" }, {
+    group = group,
+    callback = function(args)
+      record_activity(args.buf)
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufDelete", {
+    group = group,
+    callback = function(args)
+      activity.forget(args.buf)
     end,
   })
   vim.api.nvim_create_autocmd("VimLeavePre", {
@@ -683,6 +861,7 @@ function M.setup(options)
   set_mapping("n", state.config.keymaps.select_effort, function()
     M.select_effort()
   end, "Select Codex reasoning effort")
+  require("codex_complete.null_ls").register()
   redraw_statusline()
   return M
 end

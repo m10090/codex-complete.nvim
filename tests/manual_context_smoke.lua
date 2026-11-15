@@ -7,8 +7,12 @@ local config = require("codex_complete.config").resolve({ codex = { timeout_ms =
 local context = require("codex_complete.context")
 local Engine = require("codex_complete.engine")
 local baseline = vim.env.CODEX_COMPLETE_BASELINE == "1"
+if vim.env.CODEX_COMPLETE_TOOLS == "1" then
+  config.codex.completion_tools = true
+end
 if baseline then
   config.context.related.enabled = false
+  config.context.lsp.enabled = false
   local prompt = require("codex_complete.prompt")
   prompt.developer_instructions = table.concat({
     "You are an inline code completion and comment-to-code engine.",

@@ -5,7 +5,7 @@ local T = MiniTest.new_set()
 
 T["uses documented defaults"] = function()
   local value = config.resolve()
-  MiniTest.expect.equality(value.debounce_ms, 300)
+  MiniTest.expect.equality(value.debounce_ms, 200)
   MiniTest.expect.equality(value.loading_indicator, true)
   MiniTest.expect.equality(value.highlights.suggestion, "CodexCompleteSuggestion")
   MiniTest.expect.equality(value.highlights.background, "CodexCompleteSuggestionBackground")

@@ -854,4 +854,74 @@ T["retains cache across insert exit and clears it with the buffer"] = function()
   MiniTest.expect.equality(plugin._state.cache[cached_bufnr], nil)
 end
 
+T["records edits, summarises intent, and sends both with requests"] = function()
+  local log = vim.fn.tempname()
+  plugin.setup({
+    auto_trigger = false,
+    intent = { idle_ms = 10, min_edits = 2 },
+    codex = { command = python_command("--log", log), timeout_ms = 5000 },
+  })
+  vim.api.nvim_exec_autocmds("BufEnter", { buffer = 0 })
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "local value = 1" })
+  vim.api.nvim_exec_autocmds("TextChanged", { buffer = 0 })
+  MiniTest.expect.equality(plugin.intent(), nil)
+  vim.api.nvim_buf_set_lines(0, 1, 1, false, { "local other = " })
+  vim.api.nvim_exec_autocmds("TextChanged", { buffer = 0 })
+  MiniTest.expect.equality(
+    vim.wait(5000, function()
+      return plugin.intent() ~= nil
+    end, 10),
+    true
+  )
+  MiniTest.expect.equality(plugin.intent(), "Building a mock feature.")
+  MiniTest.expect.equality(plugin.status().intent.pending, false)
+
+  vim.api.nvim_win_set_cursor(0, { 2, 14 })
+  MiniTest.expect.equality(plugin.trigger({ manual = true }), true)
+  vim.wait(5000, function()
+    return plugin.status().suggestion_visible or plugin.status().engine.last_error ~= nil
+  end, 10)
+  MiniTest.expect.equality(plugin.status().engine.last_error, nil)
+
+  local payloads = {}
+  for _, line in ipairs(vim.fn.readfile(log)) do
+    local message = vim.json.decode(line)
+    if message.method == "turn/start" then
+      payloads[#payloads + 1] = vim.json.decode(message.params.input[1].text)
+    end
+  end
+  MiniTest.expect.equality(#payloads, 2)
+  MiniTest.expect.equality(#payloads[1].recent_edits, 2)
+  MiniTest.expect.equality(payloads[2].intent, "Building a mock feature.")
+  MiniTest.expect.equality(payloads[2].recent_edits[2].diff:find("+local other = ", 1, true) ~= nil, true)
+end
+
+T["does not record activity or summarise intent when disabled"] = function()
+  plugin.setup({
+    auto_trigger = false,
+    context = { activity = { enabled = false } },
+    intent = { idle_ms = 10, min_edits = 1 },
+    codex = { command = python_command(), timeout_ms = 5000 },
+  })
+  vim.api.nvim_exec_autocmds("BufEnter", { buffer = 0 })
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "local value = 1" })
+  vim.api.nvim_exec_autocmds("TextChanged", { buffer = 0 })
+  vim.wait(150, function()
+    return plugin.intent() ~= nil
+  end, 10)
+  MiniTest.expect.equality(plugin.intent(), nil)
+  MiniTest.expect.equality(plugin.status().engine.client.state, "stopped")
+end
+
+T["pre-starts a thread when entering insert mode"] = function()
+  plugin.setup({ auto_trigger = true, debounce_ms = 5000, codex = { command = python_command(), timeout_ms = 5000 } })
+  vim.api.nvim_exec_autocmds("InsertEnter", { buffer = 0 })
+  MiniTest.expect.equality(
+    vim.wait(5000, function()
+      return plugin.status().engine.warm
+    end, 10),
+    true
+  )
+end
+
 return T

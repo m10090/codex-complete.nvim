@@ -80,8 +80,14 @@ MODELS = [
 ]
 
 
+thread_count = 0
+
 for raw_line in sys.stdin:
     message = json.loads(raw_line)
+    log_path = argument_value("--log")
+    if log_path is not None:
+        with open(log_path, "a", encoding="utf-8") as log:
+            log.write(raw_line.rstrip("\n") + "\n")
     method = message.get("method")
     request_id = message.get("id")
     params = message.get("params", {})
@@ -132,7 +138,9 @@ for raw_line in sys.stdin:
             )
     elif method == "thread/start":
         if model_matches(params):
-            send({"id": request_id, "result": {"thread": {"id": "thread-test"}}})
+            thread_count += 1
+            thread_id = "thread-test" if thread_count == 1 else "thread-test-%d" % thread_count
+            send({"id": request_id, "result": {"thread": {"id": thread_id}}})
         else:
             send(
                 {
@@ -182,7 +190,9 @@ for raw_line in sys.stdin:
                     "threadId": params["threadId"],
                     "item": {
                         "type": "agentMessage",
-                        "text": '{"completion":" world\\nnext_line()"}',
+                        "text": '{"intent":"Building a mock feature."}'
+                        if "intent" in params.get("outputSchema", {}).get("properties", {})
+                        else '{"completion":" world\\nnext_line()"}',
                     },
                 },
             }

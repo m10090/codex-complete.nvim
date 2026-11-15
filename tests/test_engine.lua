@@ -385,4 +385,152 @@ T["keeps skill commentary out of completions"] = function()
   MiniTest.expect.equality(received, " world")
 end
 
+local function read_log(path)
+  local messages = {}
+  for _, line in ipairs(vim.fn.readfile(path)) do
+    messages[#messages + 1] = vim.json.decode(line)
+  end
+  return messages
+end
+
+local function methods(messages)
+  local names = {}
+  for _, message in ipairs(messages) do
+    if message.method == "thread/start" or message.method == "turn/start" then
+      names[#names + 1] = message.method
+    end
+  end
+  return names
+end
+
+T["reuses a pre-started thread and sends tool-free instructions"] = function()
+  local log = vim.fn.tempname()
+  local value = config.resolve({ codex = { command = python_command("--log", log), timeout_ms = 5000 } })
+  local completions = 0
+  local failure
+  local engine = Engine.new(value, {
+    on_completion = function()
+      completions = completions + 1
+    end,
+    on_error = function(message)
+      failure = message
+    end,
+  })
+  local captured = context.capture(0, 0, value)
+  local _, cwd = require("codex_complete.related").project(captured)
+
+  engine:prewarm(cwd)
+  engine:prewarm(cwd)
+  vim.wait(5000, function()
+    return engine:status().warm
+  end, 10)
+  MiniTest.expect.equality(engine:status().warm, true)
+
+  engine:request(captured, true)
+  vim.wait(5000, function()
+    return completions == 1 or failure ~= nil
+  end, 10)
+  MiniTest.expect.equality(failure, nil)
+  vim.wait(5000, function()
+    return engine:status().warm
+  end, 10)
+  engine:request(context.capture(0, 0, value), true)
+  vim.wait(5000, function()
+    return completions == 2 or failure ~= nil
+  end, 10)
+  vim.wait(5000, function()
+    return engine:status().warm
+  end, 10)
+  engine:stop()
+  MiniTest.expect.equality(failure, nil)
+  MiniTest.expect.equality(completions, 2)
+
+  local messages = read_log(log)
+  MiniTest.expect.equality(
+    methods(messages),
+    { "thread/start", "turn/start", "thread/start", "turn/start", "thread/start" }
+  )
+  local threads, turns = {}, {}
+  for _, message in ipairs(messages) do
+    if message.method == "thread/start" then
+      threads[#threads + 1] = message
+    elseif message.method == "turn/start" then
+      turns[#turns + 1] = message
+    end
+  end
+  MiniTest.expect.equality(threads[1].params.developerInstructions, require("codex_complete.prompt").fast_instructions)
+  MiniTest.expect.equality(turns[1].params.threadId, "thread-test")
+  MiniTest.expect.equality(turns[2].params.threadId, "thread-test-2")
+end
+
+T["does not pre-start threads when disabled and drops them on model changes"] = function()
+  local log = vim.fn.tempname()
+  local value = config.resolve({
+    codex = { command = python_command("--log", log), timeout_ms = 5000, prewarm = false },
+  })
+  local received
+  local engine = Engine.new(value, {
+    on_completion = function(_, completion)
+      received = completion
+    end,
+    on_error = function() end,
+  })
+  engine:request(context.capture(0, 0, value), true)
+  vim.wait(5000, function()
+    return received ~= nil
+  end, 10)
+  MiniTest.expect.equality(methods(read_log(log)), { "thread/start", "turn/start" })
+
+  engine:prewarm(vim.fn.getcwd())
+  vim.wait(5000, function()
+    return engine:status().warm
+  end, 10)
+  MiniTest.expect.equality(engine:status().warm, true)
+  engine:set_model("gpt-test-fast")
+  MiniTest.expect.equality(engine:status().warm, false)
+  engine:stop()
+end
+
+T["summarises intent in the background alongside a completion"] = function()
+  local value = config.resolve({ codex = { command = python_command("--delay"), timeout_ms = 5000, prewarm = false } })
+  local received, intent, intent_error, failure
+  local engine = Engine.new(value, {
+    on_completion = function(_, completion)
+      received = completion
+    end,
+    on_error = function(message)
+      failure = message
+    end,
+  })
+  MiniTest.expect.equality(
+    engine:summarize("{}", vim.fn.getcwd(), function(err, value_)
+      intent_error, intent = err, value_
+    end),
+    true
+  )
+  MiniTest.expect.equality(engine:summarize("{}", vim.fn.getcwd(), function() end), false)
+  MiniTest.expect.equality(engine:status().summarizing, true)
+  engine:request(context.capture(0, 0, value), true)
+  vim.wait(5000, function()
+    return received ~= nil and intent ~= nil or failure ~= nil or intent_error ~= nil
+  end, 10)
+  engine:stop()
+  MiniTest.expect.equality(failure, nil)
+  MiniTest.expect.equality(intent_error, nil)
+  MiniTest.expect.equality(intent, "Building a mock feature.")
+  MiniTest.expect.equality(received, " world\nnext_line()")
+  MiniTest.expect.equality(engine:status().summarizing, false)
+end
+
+T["reports a stopped engine to a pending intent summary"] = function()
+  local value = config.resolve({ codex = { command = python_command("--hang"), timeout_ms = 5000 } })
+  local engine = Engine.new(value, { on_completion = function() end, on_error = function() end })
+  local intent_error
+  engine:summarize("{}", vim.fn.getcwd(), function(err)
+    intent_error = err
+  end)
+  engine:stop()
+  MiniTest.expect.equality(intent_error, "Codex app-server stopped")
+end
+
 return T
