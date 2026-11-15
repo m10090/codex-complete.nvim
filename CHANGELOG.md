@@ -16,7 +16,7 @@ All notable changes to this project will be documented in this file.
 - Inline ghost text is now off by default; set `ghost_text = true` to restore
   it. Suggestions are offered through the completion menu instead.
 - Suggestion ghost text now defaults to black text on a dark green background.
-- The default completion model is now `gpt-5.6-luna` with low reasoning.
+- The default completion model is now `gpt-6-luna` with low reasoning.
 
 ### Added
 

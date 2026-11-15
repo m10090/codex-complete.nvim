@@ -643,7 +643,7 @@ T["ignores a picker choice after setup replaces its engine"] = function()
 
   plugin.setup({ auto_trigger = false, notify = false, codex = { command = python_command() } })
   choose(choice)
-  MiniTest.expect.equality(plugin.status().model.current, "gpt-5.6-luna")
+  MiniTest.expect.equality(plugin.status().model.current, "gpt-6-luna")
 end
 
 T["settles a model-list callback when setup replaces its engine"] = function()
@@ -659,7 +659,7 @@ T["settles a model-list callback when setup replaces its engine"] = function()
 
   plugin.setup({ auto_trigger = false, notify = false, codex = { command = python_command() } })
   MiniTest.expect.equality(failure, "Codex model request was superseded by setup")
-  MiniTest.expect.equality(plugin.status().model.current, "gpt-5.6-luna")
+  MiniTest.expect.equality(plugin.status().model.current, "gpt-6-luna")
 end
 
 T["lists reasoning efforts for the configured default model"] = function()

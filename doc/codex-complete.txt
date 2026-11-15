@@ -103,7 +103,7 @@ comment. Comment replacements are explicit only and are not added to the
 automatic-completion cache. Configure the mappings with
 keymaps.comment_trigger and keymaps.comment_accept.
 
-The built-in defaults use gpt-5.6-luna with low reasoning. Set codex.model or
+The built-in defaults use gpt-6-luna with low reasoning. Set codex.model or
 codex.effort to override either value. Runtime selections last for the current
 Neovim session and are reset whenever setup() runs again.
 

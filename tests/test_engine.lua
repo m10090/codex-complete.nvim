@@ -30,7 +30,7 @@ T["completes through a real JSONL subprocess"] = function()
   local finished = false
   local value = config.resolve({
     codex = {
-      command = python_command("--expect-model", "gpt-5.6-luna", "--expect-effort", "low"),
+      command = python_command("--expect-model", "gpt-6-luna", "--expect-effort", "low"),
       timeout_ms = 5000,
     },
   })
@@ -190,7 +190,7 @@ T["lists every page of visible models"] = function()
     vim.tbl_map(function(model)
       return model.model
     end, models),
-    { "gpt-5.6-luna", "gpt-test-fast", "gpt-test-pro" }
+    { "gpt-6-luna", "gpt-test-fast", "gpt-test-pro" }
   )
 end
 

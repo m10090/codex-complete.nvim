@@ -32,9 +32,9 @@ def effort_matches(params):
 
 MODELS = [
     {
-        "id": "gpt-5.6-luna",
-        "model": "gpt-5.6-luna",
-        "displayName": "GPT-5.6-Luna",
+        "id": "gpt-6-luna",
+        "model": "gpt-6-luna",
+        "displayName": "GPT-6-Luna",
         "hidden": False,
         "defaultReasoningEffort": "low",
         "supportedReasoningEfforts": [

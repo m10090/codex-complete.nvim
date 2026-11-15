@@ -35,7 +35,7 @@ With `lazy.nvim`:
 
 ```lua
 {
-  "joegoggin/codex-complete.nvim",
+  "m10090/codex-complete.nvim",
   main = "codex_complete",
   dependencies = { "nvimtools/none-ls.nvim" },
   opts = {},
@@ -46,7 +46,7 @@ With `packer.nvim`:
 
 ```lua
 use({
-  "joegoggin/codex-complete.nvim",
+  "m10090/codex-complete.nvim",
   requires = { "nvimtools/none-ls.nvim" },
   config = function()
     require("codex_complete").setup()
@@ -180,7 +180,7 @@ require("codex_complete").setup({
   },
   codex = {
     command = "codex",
-    model = "gpt-5.6-luna", -- Default completion model.
+    model = "gpt-6-luna", -- Default completion model.
     effort = "low", -- Default reasoning effort.
     timeout_ms = 30 * 1000,
     prewarm = true, -- Start the next completion thread ahead of time.
@@ -259,7 +259,7 @@ limits; set `intent.enabled = false` to turn them off.
 hits. `status().engine.duration_ms` reports the last request's total duration.
 These diagnostics do not log source contents.
 
-The built-in defaults use `gpt-5.6-luna` with `low` reasoning. Set
+The built-in defaults use `gpt-6-luna` with `low` reasoning. Set
 `codex.model` or `codex.effort` to override either value. Runtime model changes
 last for the current Neovim session and can be reset to the configured value
 with `:CodexCompleteModel!`.

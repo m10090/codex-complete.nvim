@@ -44,7 +44,7 @@ local defaults = {
   },
   codex = {
     command = "codex",
-    model = "gpt-5.6-luna",
+    model = "gpt-6-luna",
     effort = "low",
     timeout_ms = 30 * 1000,
     prewarm = true,
