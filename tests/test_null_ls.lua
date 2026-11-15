@@ -61,6 +61,20 @@ T["builds an item that replaces the typed keyword"] = function()
     ["end"] = { line = 0, character = 17 },
   })
   MiniTest.expect.equality(item.documentation.value, "```lua\nprint(value)\n```")
+  MiniTest.expect.equality(item.kind, 23)
+  MiniTest.expect.equality(item.labelDetails, { description = "Codex" })
+  MiniTest.expect.equality(item.data, { codex_complete = true })
+end
+
+T["gives Codex entries their own kind in the nvim-cmp menu"] = function()
+  local entry = { completion_item = source.item(captured(), "nt(value)", 0) }
+  local formatted = source.cmp_format(entry, { abbr = "print(value)", kind = "Event", menu = "Codex" }, "* Codex")
+  MiniTest.expect.equality(formatted, { abbr = "print(value)", kind = "* Codex", kind_hl_group = "CodexCompleteKind" })
+  MiniTest.expect.equality(source.cmp_format(entry, { kind = "Event" }).kind, "Codex")
+
+  local other = { completion_item = { label = "print", data = { id = 1 } } }
+  MiniTest.expect.equality(source.cmp_format(other, { kind = "Function" }), { kind = "Function" })
+  MiniTest.expect.equality(source.cmp_format({ completion_item = {} }, { kind = "Text" }), { kind = "Text" })
 end
 
 T["marks multiline suggestions and covers a paired delimiter"] = function()

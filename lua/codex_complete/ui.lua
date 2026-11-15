@@ -15,6 +15,7 @@ local default_highlights = {
 function M.setup_highlights()
   vim.api.nvim_set_hl(0, default_highlights.suggestion, { fg = "#000000", ctermfg = 0 })
   vim.api.nvim_set_hl(0, default_highlights.background, { bg = "#50A14F", ctermbg = 71 })
+  vim.api.nvim_set_hl(0, "CodexCompleteKind", { link = "Special", default = true })
 end
 
 local function lines(value)

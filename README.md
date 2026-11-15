@@ -73,6 +73,22 @@ requests itself; it answers once the automatic or manual request finishes, so
 the entry appears a moment after the rest of the menu. Other null-ls
 completion sources wait for it during that time.
 
+Entries are marked as Codex suggestions: their detail reads "Codex" and they
+use the `Event` kind, which language servers rarely produce. In nvim-cmp you
+can give them a kind of their own by wrapping your formatter:
+
+```lua
+formatting = {
+  format = function(entry, item)
+    -- Run your existing formatter first, then:
+    return require("codex_complete.null_ls").cmp_format(entry, item, "󰚩 Codex")
+  end,
+}
+```
+
+The third argument is the kind text and defaults to `Codex`; the kind uses the
+`CodexCompleteKind` highlight group, linked to `Special` by default.
+
 Inline ghost text is off by default. Set `ghost_text = true` to draw the
 suggestion at the cursor as well. The accept key works either way.
 

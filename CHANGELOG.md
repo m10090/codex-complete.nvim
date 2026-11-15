@@ -29,6 +29,8 @@ All notable changes to this project will be documented in this file.
   the request context.
 - A rolling window of recent edits and visited files in the request context.
 - Background intent summaries of recent edits, with `:CodexCompleteIntent`.
+- Codex completion entries carry their own marker, with a `cmp_format` helper
+  that gives them a dedicated kind in nvim-cmp.
 - Cached project briefs sent with every completion, with
   `:CodexCompleteProject`.
 - A null-ls (none-ls) completion source that offers the current suggestion to

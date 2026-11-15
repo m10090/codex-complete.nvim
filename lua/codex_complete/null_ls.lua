@@ -6,7 +6,9 @@
 
 local M = {}
 
-local text_kind = 1
+--- LSP has no custom kinds; Event is rarely used by language servers.
+local event_kind = 23
+local marker = "Codex"
 local plain_text_format = 1
 local label_limit = 60
 local registered = false
@@ -51,7 +53,10 @@ function M.item(captured, completion, replace_length, encoding)
   end
   return {
     label = label,
-    kind = text_kind,
+    kind = event_kind,
+    detail = marker .. " suggestion",
+    labelDetails = { description = marker },
+    data = { codex_complete = true },
     filterText = text,
     insertTextFormat = plain_text_format,
     textEdit = {
@@ -69,6 +74,25 @@ function M.item(captured, completion, replace_length, encoding)
       value = ("```%s\n%s\n```"):format(captured.filetype or "", text),
     },
   }
+end
+
+--- Marks Codex entries in an nvim-cmp menu with their own kind.
+---
+--- Call it from `formatting.format` after any existing formatter.
+---
+---@param entry table nvim-cmp entry.
+---@param item table Menu item being formatted.
+---@param label string|nil Kind text, such as an icon followed by a name.
+---@return table item
+---
+function M.cmp_format(entry, item, label)
+  local data = entry and entry.completion_item and entry.completion_item.data
+  if type(data) == "table" and data.codex_complete then
+    item.kind = label or marker
+    item.kind_hl_group = "CodexCompleteKind"
+    item.menu = nil
+  end
+  return item
 end
 
 --- Answers a null-ls completion request once a suggestion is available.
