@@ -4,9 +4,10 @@ Codex-powered inline completions for Neovim, using your existing Codex CLI login
 instead of an OpenAI API key.
 
 The plugin waits briefly after you stop typing, sends bounded context from the
-current buffer and relevant project definitions to a persistent `codex app-server` process, and displays the
-result as single- or multiline ghost text. The buffer is not changed until you
-accept the suggestion.
+current buffer and relevant project definitions to a persistent `codex app-server` process, and offers the
+result in your completion menu through [none-ls.nvim](https://github.com/nvimtools/none-ls.nvim)
+(null-ls). Inline ghost text is available as an option. The buffer is not
+changed until you accept the suggestion.
 
 > [!IMPORTANT]
 > `codex app-server` is currently marked experimental by the Codex CLI. The
@@ -19,6 +20,9 @@ accept the suggestion.
 - [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
 - A ChatGPT account with Codex access
 - A completed `codex login` browser or device-code flow
+- [none-ls.nvim](https://github.com/nvimtools/none-ls.nvim) and an LSP
+  completion client such as [nvim-cmp](https://github.com/hrsh7th/nvim-cmp)
+  with `cmp-nvim-lsp`, to show suggestions in the completion menu
 
 The Codex CLI supports ChatGPT sign-in for subscription access and caches that
 login for local clients. See the official OpenAI documentation for
@@ -33,6 +37,7 @@ With `lazy.nvim`:
 {
   "joegoggin/codex-complete.nvim",
   main = "codex_complete",
+  dependencies = { "nvimtools/none-ls.nvim" },
   opts = {},
 }
 ```
@@ -42,6 +47,7 @@ With `packer.nvim`:
 ```lua
 use({
   "joegoggin/codex-complete.nvim",
+  requires = { "nvimtools/none-ls.nvim" },
   config = function()
     require("codex_complete").setup()
   end,
@@ -53,6 +59,22 @@ Run the health check after installation:
 ```vim
 :checkhealth codex_complete
 ```
+
+## Completion menu (null-ls)
+
+`setup()` registers a `codex_complete` completion source with null-ls when it
+is installed. null-ls acts as a language server, so the suggestion appears in
+any LSP completion client: nvim-cmp through `cmp-nvim-lsp`, blink.cmp, or
+Neovim's built-in LSP completion. No extra source entry is needed.
+
+The entry replaces the keyword being typed with the full suggestion, and its
+documentation window previews multiline suggestions. The source does not start
+requests itself; it answers once the automatic or manual request finishes, so
+the entry appears a moment after the rest of the menu. Other null-ls
+completion sources wait for it during that time.
+
+Inline ghost text is off by default. Set `ghost_text = true` to draw the
+suggestion at the cursor as well. The accept key works either way.
 
 ## Default controls
 
@@ -69,13 +91,14 @@ Run the health check after installation:
 Visible suggestions are dismissed when you continue typing or leave insert
 mode. You can also dismiss them through `:CodexCompleteDismiss` or `dismiss()`.
 
-Automatic suggestions are requested 300 milliseconds after typing stops. Every
+Automatic suggestions are requested 200 milliseconds after typing stops. Every
 new keystroke resets that timer and cancels an obsolete in-flight request. An
 inline, theme-colored spinner appears while Codex is generating the suggestion.
 
-Suggestion text uses black text on a dark green (`#50A14F`) background applied
-only behind the ghost text, keeping it distinct from comments. Both highlight
-groups are configurable, and the background can be disabled.
+With `ghost_text = true`, suggestion text uses black text on a dark green
+(`#50A14F`) background applied only behind the ghost text, keeping it distinct
+from comments. Comment replacement previews use the same highlights. Both
+highlight groups are configurable, and the background can be disabled.
 
 The last suggestion is cached in memory for each open buffer. Returning to the
 same editing context restores it immediately without another request. Typing a
@@ -116,8 +139,9 @@ Common options are shown below. Omitted entries retain their defaults:
 require("codex_complete").setup({
   enabled = true,
   auto_trigger = true,
-  debounce_ms = 300,
+  debounce_ms = 200,
   loading_indicator = true,
+  ghost_text = false, -- Set to true to also draw suggestions inline.
   highlights = {
     suggestion = "CodexCompleteSuggestion", -- Black text by default.
     background = "CodexCompleteSuggestionBackground", -- Dark green; set to false for no background.
@@ -133,6 +157,22 @@ require("codex_complete").setup({
       max_bytes = 16 * 1024,
       max_snippets = 8,
     },
+    lsp = { -- Language-server facts gathered before each request.
+      enabled = true,
+      timeout_ms = 150,
+      max_completions = 40,
+      max_hover = 3,
+    },
+    activity = { -- Rolling window of your recent edits.
+      enabled = true,
+      max_edits = 8,
+      max_bytes = 4 * 1024,
+    },
+  },
+  intent = { -- Background summary of what you are working on.
+    enabled = true,
+    idle_ms = 3000,
+    min_edits = 3,
   },
   suggestion = {
     max_lines = 20,
@@ -143,6 +183,8 @@ require("codex_complete").setup({
     model = "gpt-5.6-luna", -- Default completion model.
     effort = "low", -- Default reasoning effort.
     timeout_ms = 30 * 1000,
+    prewarm = true, -- Start the next completion thread ahead of time.
+    completion_tools = false, -- Let inline completions read files and skills.
   },
   keymaps = {
     accept = "<M-;>",
@@ -178,11 +220,40 @@ Related code adds at most 16 KiB across eight snippets to the existing 24 KiB
 current-buffer budget. Set `context.related.enabled = false` to disable this
 local enrichment. These limits do not limit Codex's own file or skill reads.
 
-Codex threads start in the active file's directory and can discover project
-instructions and skills normally. For example, completing `///` above a Rust
-struct can trigger a documentation skill and load its Rust convention reference.
-Skill selection remains model-driven; loading a skill can add model round trips
-beyond the local retrieval deadline. The model and reasoning defaults are unchanged.
+### Speed
+
+Inline completions are answered in a single model response. Codex is told not
+to read files or load skills, because each read is another model round trip;
+everything it needs is sent up front. Comment replacements still let Codex
+inspect the project and apply skills. Set `codex.completion_tools = true` to
+allow that for inline completions too: completing `///` above a Rust struct
+can then trigger a documentation skill, at the cost of extra round trips.
+
+With `codex.prewarm` enabled, the app server and the next completion thread
+are started when you enter insert mode and again after each request, so a
+request only has to start a turn.
+
+### Language-server context
+
+Before each inline request the plugin asks the attached language servers for
+signature help at the cursor, the completion list for the word being typed,
+hover text for up to `max_hover` identifiers earlier on the line, and nearby
+diagnostics. Collection stops after `context.lsp.timeout_ms` and sends
+whatever arrived. Set `context.lsp.enabled = false` to skip it.
+
+### Recent edits and intent
+
+The plugin keeps a rolling window of your last `context.activity.max_edits`
+edits as small unified diffs, plus recently visited files, and sends them with
+each request so Codex can continue what you are doing. Edits are recorded when
+you leave insert mode, change text in normal mode, or write a buffer.
+
+When you pause for `intent.idle_ms` after at least `intent.min_edits` new
+edits, a separate background request reads that window and writes a short
+summary of what you are working on. Later requests include it.
+`:CodexCompleteIntent` shows the current summary. Background summaries run on
+their own thread, do not delay completions, and count against your Codex
+limits; set `intent.enabled = false` to turn them off.
 
 `status().engine.context` reports retrieval time, source filenames, and cache
 hits. `status().engine.duration_ms` reports the last request's total duration.
@@ -207,7 +278,8 @@ advertised default. Model and effort changes cancel and clear older suggestions.
 | `:CodexCompleteEnable` | `enable()` | Enable requests |
 | `:CodexCompleteDisable` | `disable()` | Cancel work and disable requests |
 | `:CodexCompleteToggle` | `toggle()` | Toggle request handling |
-| `:CodexCompleteDismiss` | `dismiss()` | Clear visible ghost text |
+| `:CodexCompleteDismiss` | `dismiss()` | Clear the current suggestion |
+| `:CodexCompleteIntent` | `intent()` | Show the background summary of your recent edits |
 | `:CodexCompleteModel` | `select_model()` | Select from available models |
 | `:CodexCompleteModel {id}` | `set_model(id)` | Validate and select a model ID |
 | `:CodexCompleteModel!` | `reset_model()` | Restore the configured default model |
@@ -217,39 +289,27 @@ advertised default. Model and effort changes cancel and clear older suggestions.
 
 `accept()` inserts a visible completion or applies a visible comment
 replacement, while `status()` returns current
-plugin, process, request, model, reasoning-effort, loading-indicator, and error
-state.
+plugin, process, request, model, reasoning-effort, loading-indicator, intent,
+and error state.
 `list_models(callback)` retrieves the visible Codex model catalog and calls
 `callback(error, models)` when it completes. `list_efforts(callback)` similarly
 returns the active model's supported reasoning efforts.
 
-## Lualine
-
-Add the built-in `codex_complete` component to any
-[lualine.nvim](https://github.com/nvim-lualine/lualine.nvim) section:
-
-```lua
-require("lualine").setup({
-  sections = {
-    lualine_x = { "codex_complete" },
-  },
-})
-```
-
-The component shows whether completions are enabled, followed by the active
-model and reasoning effort. It has no icon or Nerd Font requirement, and
-lualine's standard component options can customize its presentation.
-
 ## Privacy and safety
 
 - Requests include bounded current-buffer text and relevant project snippets,
-  with filenames and line ranges. Comment requests also include the selected
+  with filenames and line ranges, language-server signature, completion,
+  hover, and diagnostic text for the cursor, and diffs of your recent edits
+  with the names of recently visited files. Background intent summaries send
+  the same diffs and file names. Edits in sensitive files are not recorded. Comment requests also include the selected
   comment and replacement range. The local collector excludes sensitive
   filenames and generated directories and respects ignore rules in disk searches.
 - Completion threads are ephemeral, run with a read-only sandbox and approval
-  policy of `never`, with network access disabled. Codex may read project files,
-  instructions, skills, and references; it is instructed not to modify files or
-  run skill scripts. Local snippet filters do not govern Codex's own file reads.
+  policy of `never`, with network access disabled. Inline completions instruct
+  Codex not to read files; comment replacements and intent summaries may read
+  project files, instructions, skills, and references. Codex is instructed not
+  to modify files or run skill scripts. Local snippet filters do not govern
+  Codex's own file reads.
 - Completion threads use the active file's directory (Neovim's working directory
   for unnamed buffers).
 - The plugin checks account state through the app-server protocol. It never
@@ -285,8 +345,8 @@ An optional authenticated smoke check is available with
 `nvim --headless -u NONE -l tests/manual_context_smoke.lua`. It sends synthetic
 Rust completion requests and prints suggestions, read commands, and timing
 metadata. Set `CODEX_COMPLETE_CASE=struct` or `docs` to select one case, or
-`CODEX_COMPLETE_BASELINE=1` to compare with buffer-only context and a tool-free
-prompt. Ensure `codex` on PATH launches the app server without extra stdout.
+`CODEX_COMPLETE_BASELINE=1` to compare with buffer-only context, or
+`CODEX_COMPLETE_TOOLS=1` to let inline completions read files and skills. Ensure `codex` on PATH launches the app server without extra stdout.
 
 ## License
 

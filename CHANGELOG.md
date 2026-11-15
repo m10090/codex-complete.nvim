@@ -4,17 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- The built-in lualine component.
+
 ### Changed
 
+- Inline completions are answered in a single response without file or skill
+  reads; set `codex.completion_tools = true` to restore them.
+- The default debounce is now 200 milliseconds.
+- Inline ghost text is now off by default; set `ghost_text = true` to restore
+  it. Suggestions are offered through the completion menu instead.
 - Suggestion ghost text now defaults to black text on a dark green background.
 - The default completion model is now `gpt-5.6-luna` with low reasoning.
 
 ### Added
 
+- Pre-started completion threads, so a request only starts a turn.
+- Language-server signature help, completions, hover text, and diagnostics in
+  the request context.
+- A rolling window of recent edits and visited files in the request context.
+- Background intent summaries of recent edits, with `:CodexCompleteIntent`.
+- A null-ls (none-ls) completion source that offers the current suggestion to
+  nvim-cmp and other LSP completion clients.
 - Tree-sitter comment prompts with explicit normal-mode triggering, virtual
   replacement previews, and atomic acceptance over the comment range.
-- A built-in lualine component showing enabled status, active model, and
-  reasoning effort.
 - Configurable normal-mode mappings for toggling suggestions and opening the
   model and reasoning-effort pickers.
 - Runtime model and reasoning-effort selection with pickers, direct commands,
